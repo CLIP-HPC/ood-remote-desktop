@@ -1,0 +1,6 @@
+# The /rnode proxy expects the short host name; hostname returns the FQDN on the nodes
+# and clusters.d/cbe.yml has no set_host for the vnc_container template.
+host="$(hostname -s)"
+
+# Export the module function if it exists
+[[ $(type -t module) == "function" ]] && export -f module

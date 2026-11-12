@@ -1,0 +1,75 @@
+---
+cluster: "cbe"
+# Limits follow the interactive QOS (48 CPUs, 1000 GB, 2 GPUs, 12 hours per user) and the
+# submit rules on CBE.next: sessions on m need at least 128 GB, sessions on g need a GPU.
+attributes:
+  # Not cached: a value cached from an older form would override a new image.
+  # SIF of a released ghcr.io/clip-hpc/ood-desktop tag (CLIP-HPC/ood-desktop-image).
+  # TODO: no release exists yet; pin a versioned SIF once the image is tested and released.
+  container_image:
+    widget: "hidden_field"
+    value: "/software/ood/desktop/ood-desktop.sif"
+    cacheable: false
+  # A plain select, not auto_queues: auto_queues ignores options and lists every partition.
+  # form.js shows the GPU fields only on g and enforces the 128 GB minimum on m.
+  partition:
+    widget: "select"
+    label: "Partition"
+    help: |
+      CPU (c) for most work. GPU (g) adds a GPU to the desktop (CUDA, no 3D
+      acceleration yet). High memory (m) needs at least 128 GB memory.
+    value: "c"
+    options:
+      - ["CPU (c)", "c"]
+      - ["GPU (g)", "g"]
+      - ["High memory (m)", "m"]
+  # Values are Slurm GRES types (sinfo -p g -o %G). MIG slices are CUDA-only.
+  gpu_type:
+    widget: "select"
+    label: "GPU type"
+    help: "Only shown when the GPU (g) partition is selected."
+    value: "nvidia_b200_1g.23gb"
+    options:
+      - ["B200 MIG slice, 23 GB", "nvidia_b200_1g.23gb"]
+      - ["A100 MIG slice, 20 GB", "nvidia_a100_3g.20gb"]
+      - ["Quadro RTX 6000, 24 GB", "quadro_rtx_6000"]
+      - ["A100, 40 GB", "nvidia_a100-sxm4-40gb"]
+      - ["B200, 180 GB", "nvidia_b200"]
+  gpu_count:
+    widget: "number_field"
+    label: "Number of GPUs"
+    value: 1
+    min: 1
+    max: 2
+    step: 1
+  cores:
+    widget: "number_field"
+    label: "CPU cores"
+    value: 4
+    min: 1
+    max: 48
+    step: 1
+  ram:
+    widget: "number_field"
+    label: "Memory (GB)"
+    value: 16
+    min: 1
+    max: 1000
+    step: 1
+  bc_num_hours:
+    widget: "number_field"
+    label: "Hours"
+    value: 8
+    min: 1
+    max: 12
+    step: 1
+  bc_email_on_started: ""
+form:
+  - container_image
+  - partition
+  - gpu_type
+  - gpu_count
+  - cores
+  - ram
+  - bc_num_hours
+  - bc_email_on_started

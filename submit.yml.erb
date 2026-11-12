@@ -1,0 +1,40 @@
+<%-
+  gpu = partition == "g"
+  # Data and software only. /var and /run stay the image's own (D-Bus needs its machine id,
+  # ood-desktop makes its own XDG_RUNTIME_DIR). The host's Slurm 26.05 client needs glibc
+  # 2.38 and the Rocky 9 image has 2.34, so Slurm commands are not bound in.
+  binds = %w[/users /groups /scratch /clustertmp /software /resources /cvmfs]
+-%>
+---
+batch_connect:
+  template: "vnc_container"
+  container_command: "apptainer"
+  # Apptainer is in /usr/bin on the compute nodes; an empty module load is harmless.
+  container_module: ""
+  container_path: "<%= container_image %>"
+  container_bindpath: "<%= binds.join(",") %>"
+  <%- if gpu -%>
+  container_start_args:
+    - "--nv"
+  <%- end -%>
+  websockify_cmd: "/usr/bin/websockify"
+  # Starting size; noVNC resizes the desktop to the browser window after connecting
+  geometry: "1920x1080"
+  # Only websockify on the same node talks to Xvnc, and only with the one-time VNC password
+  extra_args: "-localhost -securitytypes VNC"
+# See the Slurm section at https://osc.github.io/ood-documentation/master/enable-desktops/custom-job-submission.html
+script:
+  job_name: "ood-desktop"
+  native:
+    - "--partition"
+    - "<%= partition.blank? ? "c" : partition %>"
+    - "--ntasks"
+    - "1"
+    - "--mem"
+    - "<%= ram.blank? ? 16 : ram.to_i %>G"
+    - "--cpus-per-task"
+    - "<%= cores.blank? ? 4 : cores.to_i %>"
+    <%- if gpu -%>
+    - "--gres"
+    - "gpu:<%= gpu_type %>:<%= gpu_count.blank? ? 1 : gpu_count.to_i %>"
+    <%- end -%>

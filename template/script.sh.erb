@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Runs on the host with DISPLAY set by the vnc_container template. The desktop must run
+# inside the instance: the host has no desktop installed. ood-desktop (from
+# CLIP-HPC/ood-desktop-image) sets up D-Bus, XDG_RUNTIME_DIR and the Xfce defaults.
+
+cd "${HOME}"
+
+# Ensure that the user's configured login shell is used
+export SHELL="$(getent passwd "$USER" | cut -d: -f7)"
+
+# Start Xfce (blocks until the user logs out of the desktop)
+echo "Launching desktop in instance ${INSTANCE_NAME} on display ${DISPLAY}..."
+apptainer exec "instance://${INSTANCE_NAME}" ood-desktop
+echo "Desktop ended with $? status..."
