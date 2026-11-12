@@ -1,9 +1,31 @@
 <%-
-  gpu = partition == "g"
+  # Partitions and GPU types this cluster has (cluster_info.rb). A posted value outside
+  # them would only fail in Slurm, so stop here with a clear message first.
+  load File.join(File.dirname(__FILE__), "cluster_info.rb")
+  partitions = RemoteDesktopCluster.partitions
+  part = partition.blank? ? (partitions.include?("c") ? "c" : partitions.first) : partition.to_s
+  unless partitions.include?(part)
+    raise ArgumentError, "This cluster has no partition #{part} for desktops. Choose one of: #{partitions.join(", ")}."
+  end
+  gpu = part == "g"
+  if gpu
+    gpus = RemoteDesktopCluster.gpus(partitions)
+    # The GPU fields are left out of the form on a cluster without g
+    type = (gpu_type.to_s rescue "")
+    unless gpus.key?(type)
+      raise ArgumentError, "Partition g has no GPU type #{type.inspect}. Choose one of: #{gpus.keys.join(", ")}."
+    end
+    count = (gpu_count.to_s rescue "")
+    n_gpus = count.blank? ? 1 : count.to_i
+    if n_gpus > gpus[type]
+      raise ArgumentError, "No node has more than #{gpus[type]} GPUs of type #{type}; you asked for #{n_gpus}."
+    end
+  else
+    n_gpus = 0
+  end
   hours = bc_num_hours.blank? ? 8 : bc_num_hours.to_i
   n_cores = cores.blank? ? 4 : cores.to_i
   n_ram = ram.blank? ? 16 : ram.to_i
-  n_gpus = gpu ? (gpu_count.blank? ? 1 : gpu_count.to_i) : 0
 
   # Slurm rejects or holds a session outside the interactive QOS with an unhelpful
   # message, so check the same limits here; the dashboard shows the error text.
@@ -13,7 +35,7 @@
   problems = []
   problems << "OnDemand sessions can run for at most #{qos[:hours]} hours; you asked for #{hours}. " \
               "For longer work, submit a batch job with sbatch from a login node." if hours > qos[:hours]
-  problems << "The high memory (m) partition needs at least 128 GB memory." if partition == "m" && n_ram < 128
+  problems << "The high memory (m) partition needs at least 128 GB memory." if part == "m" && n_ram < 128
   problems << "You already have #{used[:jobs]} OnDemand sessions running or queued, the maximum is " \
               "#{qos[:jobs]}. Delete a session first." if used[:jobs] >= qos[:jobs]
   { cpu: [n_cores, "cores"], mem_gb: [n_ram, "GB memory"], gpu: [n_gpus, "GPUs"] }.each do |key, (asked, what)|
@@ -25,18 +47,25 @@
   end
   raise ArgumentError, problems.join(" ") unless problems.empty?
 
-  # Admins may override the image (desktop_container); everyone else gets the default.
-  image = container_image.to_s
+  # The image is set here, not in the form, so only admins can choose another one
+  # (desktop_container). The default is a symlink to the current
+  # CLIP-HPC/ood-desktop-image release; the real path pins the session to that version.
+  image = "/software/ood/desktop/ood-desktop.sif"
   if CurrentUser.group_names.include?("perm.cbe.users.admin") && !desktop_container.to_s.strip.empty?
     image = File.expand_path(desktop_container.to_s.strip)
   end
   unless File.file?(image) && File.readable?(image) && (image = File.realpath(image)).match?(%r{\A[\w./+-]+\z})
     raise ArgumentError, "Container image #{image} must be a readable file whose path has only letters, digits and ._/+-"
   end
-  # Data and software only. /var and /run stay the image's own (D-Bus needs its machine id,
-  # ood-desktop makes its own XDG_RUNTIME_DIR). The host's Slurm 26.05 client needs glibc
-  # 2.38 and the Rocky 9 image has 2.34, so Slurm commands are not bound in.
-  binds = %w[/users /groups /scratch /clustertmp /software /resources /cvmfs]
+
+  # The network filesystems (/users, /groups, /scratch, /software, /cvmfs, /programs, ...)
+  # need no binds: apptainer.conf on the compute nodes has `mount hostfs = yes`. Bind only
+  # what is on the node's local disk: the munge socket and slurmd's config cache
+  # ($SLURM_CONF) and step sockets, for the image's own Slurm client. existing_paths
+  # (from the vnc_container script_wrapper in clusters.d/cbe.yml) skips a missing path,
+  # which Apptainer would refuse. /var and /run stay the image's own otherwise (D-Bus
+  # needs its machine id, ood-desktop makes its own XDG_RUNTIME_DIR).
+  binds = %w[/run/munge /var/spool/slurmd]
 -%>
 ---
 batch_connect:
@@ -45,7 +74,7 @@ batch_connect:
   # Apptainer is in /usr/bin on the compute nodes; an empty module load is harmless.
   container_module: ""
   container_path: "<%= image %>"
-  container_bindpath: "<%= binds.join(",") %>"
+  container_bindpath: "$(existing_paths <%= binds.join(" ") %>)"
   <%- if gpu -%>
   container_start_args:
     - "--nv"
@@ -60,14 +89,14 @@ script:
   job_name: "ood-desktop"
   native:
     - "--partition"
-    - "<%= partition.blank? ? "c" : partition %>"
+    - "<%= part %>"
     - "--ntasks"
     - "1"
     - "--mem"
-    - "<%= ram.blank? ? 16 : ram.to_i %>G"
+    - "<%= n_ram %>G"
     - "--cpus-per-task"
-    - "<%= cores.blank? ? 4 : cores.to_i %>"
+    - "<%= n_cores %>"
     <%- if gpu -%>
     - "--gres"
-    - "gpu:<%= gpu_type %>:<%= gpu_count.blank? ? 1 : gpu_count.to_i %>"
+    - "gpu:<%= type %>:<%= n_gpus %>"
     <%- end -%>

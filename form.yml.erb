@@ -6,17 +6,22 @@
   used = RemoteDesktopQos.usage
   in_use = "Your #{used[:jobs]} running or queued session(s) already use " \
            "#{used[:cpu]} cores, #{used[:mem_gb]} GB and #{used[:gpu]} GPUs."
+
+  # Partitions and GPU types this cluster has (cluster_info.rb): orion has only c
+  load File.join(File.dirname(__FILE__), "cluster_info.rb")
+  partitions = RemoteDesktopCluster.partitions
+  gpus = RemoteDesktopCluster.gpus(partitions)
+  partition_help = {
+    "c" => "CPU (c) for most work.",
+    "g" => "GPU (g) adds a GPU to the desktop (CUDA, no 3D acceleration yet).",
+    "m" => "High memory (m) needs at least 128 GB memory."
+  }.values_at(*partitions).join(" ")
 -%>
 ---
 cluster: "cbe"
 # The submit rules on CBE.next add: sessions on m need at least 128 GB, sessions on g a GPU.
+# The image isn't a form field: submit.yml.erb sets it, so it can't be posted.
 attributes:
-  # Not cached: a value cached from an older form would override a new image.
-  # Symlink to the current ghcr.io/clip-hpc/ood-desktop release (CLIP-HPC/ood-desktop-image).
-  container_image:
-    widget: "hidden_field"
-    value: "/software/ood/desktop/ood-desktop.sif"
-    cacheable: false
   # Admins can test another image; submit.yml.erb checks the group again, since a hidden
   # field can still be posted.
   desktop_container:
@@ -32,36 +37,35 @@ attributes:
   partition:
     widget: "select"
     label: "Partition"
-    help: |
-      CPU (c) for most work. GPU (g) adds a GPU to the desktop (CUDA, no 3D
-      acceleration yet). High memory (m) needs at least 128 GB memory.
-    value: "c"
+    help: "<%= partition_help %>"
+    value: "<%= partitions.include?("c") ? "c" : partitions.first %>"
     options:
-      - ["CPU (c)", "c"]
-      - ["GPU (g)", "g"]
-      - ["High memory (m)", "m"]
-  # Values are Slurm GRES types (sinfo -p g -o %G). MIG slices are CUDA-only.
+    <%- partitions.each do |p| -%>
+      - <%= [RemoteDesktopCluster::PARTITIONS[p], p].to_json %>
+    <%- end -%>
+<%- unless gpus.empty? -%>
+  # Values are Slurm GRES types from sinfo -p g -o %G. data-max-gpus is the most GPUs of
+  # the type on one node, capped by the QOS; form.js sets the GPU count maximum from it.
   gpu_type:
     widget: "select"
     label: "GPU type"
-    help: "Only shown when the GPU (g) partition is selected."
-    value: "nvidia_b200_1g.23gb"
+    help: "Only shown when the GPU (g) partition is selected. MIG slices are CUDA-only."
+    value: "<%= gpus.key?("nvidia_b200_1g.23gb") ? "nvidia_b200_1g.23gb" : gpus.keys.first %>"
     options:
-      - ["B200 MIG slice, 23 GB", "nvidia_b200_1g.23gb"]
-      - ["A100 MIG slice, 20 GB", "nvidia_a100_3g.20gb"]
-      - ["Quadro RTX 6000, 24 GB", "quadro_rtx_6000"]
-      - ["A100, 40 GB", "nvidia_a100-sxm4-40gb"]
-      - ["B200, 180 GB", "nvidia_b200"]
+    <%- gpus.each do |type, per_node| -%>
+      - <%= [RemoteDesktopCluster.gpu_label(type), type, { "data-max-gpus" => [per_node, qos[:gpu]].min }].to_json %>
+    <%- end -%>
   gpu_count:
     widget: "number_field"
     label: "Number of GPUs"
     help: |
       At most <%= qos[:gpu] %> GPUs over all your desktop and other OnDemand sessions
-      together. <%= in_use %>
+      together, and no more than one node has of the chosen type. <%= in_use %>
     value: 1
     min: 1
     max: <%= qos[:gpu] %>
     step: 1
+<%- end -%>
   cores:
     widget: "number_field"
     label: "CPU cores"
@@ -76,7 +80,7 @@ attributes:
     widget: "number_field"
     label: "Memory (GB)"
     help: |
-      At least 128 GB on the high memory (m) partition. At most <%= qos[:mem_gb] %> GB
+      <%= partitions.include?("m") ? "At least 128 GB on the high memory (m) partition. " : "" %>At most <%= qos[:mem_gb] %> GB
       over all your OnDemand sessions together.
     value: 16
     min: 1
@@ -95,10 +99,11 @@ attributes:
     step: 1
   bc_email_on_started: ""
 form:
-  - container_image
   - partition
+<%- unless gpus.empty? -%>
   - gpu_type
   - gpu_count
+<%- end -%>
   - cores
   - ram
   - bc_num_hours
