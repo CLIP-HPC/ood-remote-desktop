@@ -1,5 +1,38 @@
 <%-
   gpu = partition == "g"
+  hours = bc_num_hours.blank? ? 8 : bc_num_hours.to_i
+  n_cores = cores.blank? ? 4 : cores.to_i
+  n_ram = ram.blank? ? 16 : ram.to_i
+  n_gpus = gpu ? (gpu_count.blank? ? 1 : gpu_count.to_i) : 0
+
+  # Slurm rejects or holds a session outside the interactive QOS with an unhelpful
+  # message, so check the same limits here; the dashboard shows the error text.
+  load File.join(File.dirname(__FILE__), "qos_limits.rb")
+  qos = RemoteDesktopQos.limits
+  used = RemoteDesktopQos.usage
+  problems = []
+  problems << "OnDemand sessions can run for at most #{qos[:hours]} hours; you asked for #{hours}. " \
+              "For longer work, submit a batch job with sbatch from a login node." if hours > qos[:hours]
+  problems << "The high memory (m) partition needs at least 128 GB memory." if partition == "m" && n_ram < 128
+  problems << "You already have #{used[:jobs]} OnDemand sessions running or queued, the maximum is " \
+              "#{qos[:jobs]}. Delete a session first." if used[:jobs] >= qos[:jobs]
+  { cpu: [n_cores, "cores"], mem_gb: [n_ram, "GB memory"], gpu: [n_gpus, "GPUs"] }.each do |key, (asked, what)|
+    free = qos[key] - used[key]
+    next if asked <= free
+
+    problems << "Your OnDemand sessions can use at most #{qos[key]} #{what} together. " \
+                "#{used[key]} are in use, so request at most #{[free, 0].max}, or delete a session first."
+  end
+  raise ArgumentError, problems.join(" ") unless problems.empty?
+
+  # Admins may override the image (desktop_container); everyone else gets the default.
+  image = container_image.to_s
+  if CurrentUser.group_names.include?("perm.cbe.users.admin") && !desktop_container.to_s.strip.empty?
+    image = File.expand_path(desktop_container.to_s.strip)
+  end
+  unless File.file?(image) && File.readable?(image) && (image = File.realpath(image)).match?(%r{\A[\w./+-]+\z})
+    raise ArgumentError, "Container image #{image} must be a readable file whose path has only letters, digits and ._/+-"
+  end
   # Data and software only. /var and /run stay the image's own (D-Bus needs its machine id,
   # ood-desktop makes its own XDG_RUNTIME_DIR). The host's Slurm 26.05 client needs glibc
   # 2.38 and the Rocky 9 image has 2.34, so Slurm commands are not bound in.
@@ -11,7 +44,7 @@ batch_connect:
   container_command: "apptainer"
   # Apptainer is in /usr/bin on the compute nodes; an empty module load is harmless.
   container_module: ""
-  container_path: "<%= container_image %>"
+  container_path: "<%= image %>"
   container_bindpath: "<%= binds.join(",") %>"
   <%- if gpu -%>
   container_start_args:

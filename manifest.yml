@@ -5,5 +5,5 @@ subcategory: Desktops
 role: batch_connect
 description: |
   Start an Xfce desktop on a CBE.next compute node, in your browser. The
-  desktop runs in an Apptainer container, with your files, modules and Slurm
+  desktop runs in an Apptainer container, with your files and modules
   available. Choose partition g to get a GPU.

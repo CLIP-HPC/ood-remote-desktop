@@ -1,14 +1,31 @@
+<%-
+  # Every OOD session runs in the interactive QOS, whatever the partition. Its limits come
+  # from Slurm (qos_limits.rb); submit.yml.erb checks them again with a clear message.
+  load File.join(File.dirname(__FILE__), "qos_limits.rb")
+  qos = RemoteDesktopQos.limits
+  used = RemoteDesktopQos.usage
+  in_use = "Your #{used[:jobs]} running or queued session(s) already use " \
+           "#{used[:cpu]} cores, #{used[:mem_gb]} GB and #{used[:gpu]} GPUs."
+-%>
 ---
 cluster: "cbe"
-# Limits follow the interactive QOS (48 CPUs, 1000 GB, 2 GPUs, 12 hours per user) and the
-# submit rules on CBE.next: sessions on m need at least 128 GB, sessions on g need a GPU.
+# The submit rules on CBE.next add: sessions on m need at least 128 GB, sessions on g a GPU.
 attributes:
   # Not cached: a value cached from an older form would override a new image.
-  # SIF of a released ghcr.io/clip-hpc/ood-desktop tag (CLIP-HPC/ood-desktop-image).
-  # TODO: no release exists yet; pin a versioned SIF once the image is tested and released.
+  # Symlink to the current ghcr.io/clip-hpc/ood-desktop release (CLIP-HPC/ood-desktop-image).
   container_image:
     widget: "hidden_field"
     value: "/software/ood/desktop/ood-desktop.sif"
+    cacheable: false
+  # Admins can test another image; submit.yml.erb checks the group again, since a hidden
+  # field can still be posted.
+  desktop_container:
+    widget: '<%= CurrentUser.group_names.include?("perm.cbe.users.admin") ? "text_field" : "hidden_field" %>'
+    label: "Container image (admins only)"
+    help: |
+      Path to an Apptainer image (SIF) to run instead of `/software/ood/desktop/ood-desktop.sif`,
+      for testing an image. Leave empty for the default.
+    value: ""
     cacheable: false
   # A plain select, not auto_queues: auto_queues ignores options and lists every partition.
   # form.js shows the GPU fields only on g and enforces the 128 GB minimum on m.
@@ -38,30 +55,43 @@ attributes:
   gpu_count:
     widget: "number_field"
     label: "Number of GPUs"
+    help: |
+      At most <%= qos[:gpu] %> GPUs over all your desktop and other OnDemand sessions
+      together. <%= in_use %>
     value: 1
     min: 1
-    max: 2
+    max: <%= qos[:gpu] %>
     step: 1
   cores:
     widget: "number_field"
     label: "CPU cores"
+    help: |
+      At most <%= qos[:cpu] %> cores over all your OnDemand sessions together.
+      <%= in_use %>
     value: 4
     min: 1
-    max: 48
+    max: <%= qos[:cpu] %>
     step: 1
   ram:
     widget: "number_field"
     label: "Memory (GB)"
+    help: |
+      At least 128 GB on the high memory (m) partition. At most <%= qos[:mem_gb] %> GB
+      over all your OnDemand sessions together.
     value: 16
     min: 1
-    max: 1000
+    max: <%= qos[:mem_gb] %>
     step: 1
   bc_num_hours:
     widget: "number_field"
     label: "Hours"
+    help: |
+      OnDemand sessions can run for at most <%= qos[:hours] %> hours, on every partition.
+      For longer work, submit a batch job with `sbatch` from a login node: batch jobs
+      can run for up to 14 days.
     value: 8
     min: 1
-    max: 12
+    max: <%= qos[:hours] %>
     step: 1
   bc_email_on_started: ""
 form:
@@ -73,3 +103,4 @@ form:
   - ram
   - bc_num_hours
   - bc_email_on_started
+  - desktop_container
