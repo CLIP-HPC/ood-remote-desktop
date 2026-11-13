@@ -3,12 +3,41 @@
 # inside the instance: the host has no desktop installed. ood-desktop (from
 # CLIP-HPC/ood-desktop-image) sets up D-Bus, XDG_RUNTIME_DIR and the Xfce defaults.
 
+# With --nv (GPU sessions) Apptainer injects the host's NVIDIA driver *and* glvnd libraries
+# into /.singularity.d/libs and puts the image's ld.so.conf directories (/lib, /lib64, ...)
+# in front of it in LD_LIBRARY_PATH. Everything started from the desktop inherits that:
+# - with /lib64 in front, the EESSI compat layer's tools on PATH (coreutils, which, grep)
+#   load the image's glibc 2.34 and fail with "GLIBC_2.38 not found"
+# - without it, the image's OpenGL programs load the host's glvnd libraries (libGL,
+#   libGLX, libEGL, libGLdispatch), which also need glibc 2.38
+# So put only the image's own glvnd libraries in front of the injected ones. The links
+# point at image paths and resolve inside the instance; a library the image lacks leaves a
+# dangling link, which the loader skips. Run before `cd`: the session directory is staged
+# under $HOME, so the instance sees it too.
+glvnd_dir="${PWD}/glvnd"
+mkdir -p "${glvnd_dir}"
+for lib in libGL.so.1 libGLX.so.0 libEGL.so.1 libGLdispatch.so.0 libOpenGL.so.0 \
+           libGLESv1_CM.so.1 libGLESv2.so.2; do
+  ln -sfn "/usr/lib64/${lib}" "${glvnd_dir}/${lib}"
+done
+
 cd "${HOME}"
 
 # Ensure that the user's configured login shell is used
 export SHELL="$(getent passwd "$USER" | cut -d: -f7)"
 
+# EESSI detects the GPU with nvidia-smi from Lmod, which clears LD_LIBRARY_PATH. Inside the
+# instance the NVIDIA libraries are only in /.singularity.d/libs, not in the image's
+# ld.so.cache, so every new shell in the desktop would find no accelerator and leave the
+# accel/nvidia/* module trees off MODULEPATH. Pass on what EESSI detected on the host at
+# job start (empty without a GPU, which sets nothing).
+eessi_accel_args=()
+if [[ -n "${EESSI_ACCELERATOR_TARGET:-}" ]]; then
+  eessi_accel_args=(--env "EESSI_ACCELERATOR_TARGET_OVERRIDE=${EESSI_ACCELERATOR_TARGET}")
+fi
+
 # Start Xfce (blocks until the user logs out of the desktop)
 echo "Launching desktop in instance ${INSTANCE_NAME} on display ${DISPLAY}..."
-apptainer exec "instance://${INSTANCE_NAME}" ood-desktop
+apptainer exec --env "LD_LIBRARY_PATH=${glvnd_dir}:/.singularity.d/libs" \
+  "${eessi_accel_args[@]}" "instance://${INSTANCE_NAME}" ood-desktop
 echo "Desktop ended with $? status..."
