@@ -9,6 +9,11 @@ cd "${HOME}"
 export SHELL="$(getent passwd "$USER" | cut -d: -f7)"
 
 # Start Xfce (blocks until the user logs out of the desktop)
+# With --nv (GPU sessions) Apptainer puts the image's ld.so.conf directories (/lib, /lib64,
+# ...) at the front of LD_LIBRARY_PATH. Everything started from the desktop inherits that,
+# so binaries built against a newer glibc, such as the EESSI compat layer's coreutils on
+# PATH, load the image's glibc 2.34 and fail with "GLIBC_2.38 not found". Keep only the
+# injected NVIDIA libraries; the image's own directories are in its ld.so.cache anyway.
 echo "Launching desktop in instance ${INSTANCE_NAME} on display ${DISPLAY}..."
-apptainer exec "instance://${INSTANCE_NAME}" ood-desktop
+apptainer exec --env LD_LIBRARY_PATH=/.singularity.d/libs "instance://${INSTANCE_NAME}" ood-desktop
 echo "Desktop ended with $? status..."
