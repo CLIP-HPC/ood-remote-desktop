@@ -26,8 +26,18 @@ cd "${HOME}"
 # Ensure that the user's configured login shell is used
 export SHELL="$(getent passwd "$USER" | cut -d: -f7)"
 
+# EESSI detects the GPU with nvidia-smi from Lmod, which clears LD_LIBRARY_PATH. Inside the
+# instance the NVIDIA libraries are only in /.singularity.d/libs, not in the image's
+# ld.so.cache, so every new shell in the desktop would find no accelerator and leave the
+# accel/nvidia/* module trees off MODULEPATH. Pass on what EESSI detected on the host at
+# job start (empty without a GPU, which sets nothing).
+eessi_accel_args=()
+if [[ -n "${EESSI_ACCELERATOR_TARGET:-}" ]]; then
+  eessi_accel_args=(--env "EESSI_ACCELERATOR_TARGET_OVERRIDE=${EESSI_ACCELERATOR_TARGET}")
+fi
+
 # Start Xfce (blocks until the user logs out of the desktop)
 echo "Launching desktop in instance ${INSTANCE_NAME} on display ${DISPLAY}..."
 apptainer exec --env "LD_LIBRARY_PATH=${glvnd_dir}:/.singularity.d/libs" \
-  "instance://${INSTANCE_NAME}" ood-desktop
+  "${eessi_accel_args[@]}" "instance://${INSTANCE_NAME}" ood-desktop
 echo "Desktop ended with $? status..."
